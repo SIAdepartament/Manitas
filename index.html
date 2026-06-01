@@ -1,60 +1,856 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laboratorio MediaPipe - Nodos de la Mano</title>
-    <style>
-        body {
-            margin: 0;
-            background-color: #111;
-            color: white;
-            font-family: sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-        }
-        h2 { margin-bottom: 10px; color: #00ffcc; }
-        /* El contenedor mantiene el canvas al centro */
-        .contenedor-camara {
-            position: relative;
-            width: 100%;
-            max-width: 640px;
-            aspect-ratio: 4/3;
-        }
-        /* El lienzo donde se dibujan los nodos */
-        #canvas-salida {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border-radius: 10px;
-            box-shadow: 0 0 20px rgba(0, 255, 204, 0.3);
-        }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>GestoForge 3D — Control por Gestos</title>
 
-    <!-- 1. IMPORTAR LAS LIBRERÍAS DE MEDIAPIPE DESDE INTERNET (CDN) -->
-    <!-- Librería base de MediaPipe -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <!-- Librería específica para dibujar los puntos y líneas -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <!-- El modelo de Inteligencia Artificial para las manos -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<!-- ═══════════════════════════════════════════════
+     DEPENDENCIAS CDN
+     ═══════════════════════════════════════════════ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1620248257/drawing_utils.js" crossorigin="anonymous"></script>
+
+<style>
+/* ═══════════════════════════════════════════════
+   RESET Y VARIABLES DE DISEÑO
+   ═══════════════════════════════════════════════ */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg:           #08090d;
+  --surface:      rgba(15, 18, 28, 0.82);
+  --border:       rgba(100, 200, 255, 0.18);
+  --accent:       #38e8ff;
+  --accent2:      #ff4fd8;
+  --accent3:      #a2ff5a;
+  --text:         #d0e8ff;
+  --text-dim:     rgba(180, 210, 255, 0.5);
+  --font-mono:    'Courier New', monospace;
+  --radius:       10px;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* ═══════════════════════════════════════════════
+   CAPA DE VIDEO (oculto, solo para MediaPipe)
+   ═══════════════════════════════════════════════ */
+#videoEl {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0; pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════
+   CANVAS: OVERLAY DE MANOS (encima del 3D)
+   ═══════════════════════════════════════════════ */
+#handCanvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ═══════════════════════════════════════════════
+   CANVAS THREE.JS (fondo 3D)
+   ═══════════════════════════════════════════════ */
+#threeCanvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
+}
+
+/* ═══════════════════════════════════════════════
+   PANEL DE INSTRUCCIONES
+   ═══════════════════════════════════════════════ */
+#ui-panel {
+  position: absolute;
+  top: 16px; right: 16px;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  width: min(260px, 90vw);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 32px rgba(56, 232, 255, 0.07);
+  transition: opacity 0.3s;
+}
+
+#ui-panel h1 {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.gesture-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 8px;
+}
+
+.gesture-icon {
+  font-size: 18px;
+  line-height: 1;
+  min-width: 22px;
+  text-align: center;
+  margin-top: 1px;
+}
+
+.gesture-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.gesture-desc strong {
+  color: var(--text);
+  display: block;
+}
+
+/* ═══════════════════════════════════════════════
+   PANEL DE ESTADO (abajo izquierda)
+   ═══════════════════════════════════════════════ */
+#status-panel {
+  position: absolute;
+  bottom: 16px; left: 16px;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  backdrop-filter: blur(12px);
+  min-width: 180px;
+}
+
+#status-panel .label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+#status-text {
+  font-size: 13px;
+  color: var(--accent3);
+  margin-top: 3px;
+  min-height: 18px;
+}
+
+#gesture-text {
+  font-size: 11px;
+  color: var(--accent2);
+  margin-top: 2px;
+  min-height: 14px;
+}
+
+/* ═══════════════════════════════════════════════
+   BADGE DE OBJETOS
+   ═══════════════════════════════════════════════ */
+#obj-count {
+  position: absolute;
+  top: 16px; left: 16px;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  backdrop-filter: blur(12px);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+#obj-count span { color: var(--accent); font-size: 16px; font-weight: bold; }
+
+/* ═══════════════════════════════════════════════
+   PANTALLA DE INICIO
+   ═══════════════════════════════════════════════ */
+#start-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  text-align: center;
+  padding: 24px;
+}
+
+#start-screen h2 {
+  font-size: clamp(22px, 5vw, 36px);
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  text-shadow: 0 0 30px rgba(56,232,255,0.4);
+}
+
+#start-screen p {
+  font-size: 13px;
+  color: var(--text-dim);
+  max-width: 380px;
+  line-height: 1.7;
+}
+
+#start-btn {
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 12px 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+#start-btn:hover {
+  background: rgba(56,232,255,0.08);
+  box-shadow: 0 0 20px rgba(56,232,255,0.25);
+}
+
+/* ═══════════════════════════════════════════════
+   TOGGLE DEL PANEL
+   ═══════════════════════════════════════════════ */
+#toggle-panel {
+  position: absolute;
+  top: 16px; right: 16px;
+  z-index: 25;
+  display: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  letter-spacing: 0.1em;
+}
+
+/* Gradiente de scanlines sutil */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.03) 2px,
+    rgba(0,0,0,0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+</style>
 </head>
 <body>
 
-    <h2>Interfaz de Reconocimiento de Nodos</h2>
-    <div class="contenedor-camara">
-        <!-- Video oculto: solo sirve para alimentar de imágenes a la IA -->
-        <video id="video-entrada" style="display: none;" playsinline></video>
-        <!-- Canvas visible: aquí es donde pintamos la magia -->
-        <canvas id="canvas-salida" width="640" height="480"></canvas>
-    </div>
+<!-- VIDEO OCULTO PARA MEDIAPIPE -->
+<video id="videoEl" playsinline></video>
 
-    <!-- Conectamos nuestro cerebro de código -->
-    <script src="app.js"></script>
+<!-- CANVAS THREE.JS -->
+<canvas id="threeCanvas"></canvas>
+
+<!-- CANVAS OVERLAY DE MANOS -->
+<canvas id="handCanvas"></canvas>
+
+<!-- PANTALLA DE INICIO -->
+<div id="start-screen">
+  <h2>✦ GESTOFORGE 3D ✦</h2>
+  <p>Control gestual de objetos 3D en tiempo real.<br>
+     Requiere acceso a la cámara web.</p>
+  <button id="start-btn">▶ INICIAR CÁMARA</button>
+</div>
+
+<!-- CONTADOR DE OBJETOS -->
+<div id="obj-count">Objetos: <span id="obj-num">0</span></div>
+
+<!-- PANEL DE INSTRUCCIONES -->
+<div id="ui-panel">
+  <h1>✦ Gestos</h1>
+  <div class="gesture-row">
+    <div class="gesture-icon">🤏</div>
+    <div class="gesture-desc"><strong>Pellizco en vacío</strong>Crea un cubo en esa posición</div>
+  </div>
+  <div class="gesture-row">
+    <div class="gesture-icon">✊</div>
+    <div class="gesture-desc"><strong>Pellizco + mover</strong>Arrastra el objeto seleccionado</div>
+  </div>
+  <div class="gesture-row">
+    <div class="gesture-icon">🖐</div>
+    <div class="gesture-desc"><strong>Mano abierta</strong>Rota el objeto por el ángulo de la muñeca</div>
+  </div>
+  <div class="gesture-row">
+    <div class="gesture-icon">🤲</div>
+    <div class="gesture-desc"><strong>Dos manos</strong>Separar / acercar índices para escalar</div>
+  </div>
+</div>
+
+<!-- PANEL DE ESTADO -->
+<div id="status-panel">
+  <div class="label">Estado</div>
+  <div id="status-text">Esperando...</div>
+  <div id="gesture-text"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     SCRIPT PRINCIPAL
+     ═══════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════
+   ██████╗ ██╗      ██████╗  ██████╗  █████╗ ██╗
+   ██╔════╝ ██║     ██╔═══██╗██╔══██╗██╔══██╗██║
+   ██║  ███╗██║     ██║   ██║██████╔╝███████║██║
+   ██║   ██║██║     ██║   ██║██╔══██╗██╔══██║██║
+   ╚██████╔╝███████╗╚██████╔╝██████╔╝██║  ██║███████╗
+    ╚═════╝ ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝
+   CONFIGURACIÓN Y CONSTANTES
+   ═══════════════════════════════════════════════ */
+
+/* ─── UMBRALES DE GESTOS (ajusta estos valores para calibrar) ─── */
+const CFG = {
+  // Distancia normalizada [0-1] para detectar "pellizco" (pulgar ↔ índice)
+  PINCH_THRESHOLD:        0.06,   // ← más pequeño = pellizco más cerrado requerido
+
+  // Cuántos frames debe mantenerse el pellizco para crear vs arrastrar
+  PINCH_CREATE_FRAMES:    6,      // ← frames de pellizco para instanciar cubo
+  PINCH_DRAG_FRAMES:      3,      // ← frames antes de entrar en modo arrastre
+
+  // Sensibilidad de rotación (rad por unidad de ángulo de muñeca)
+  ROTATION_SENSITIVITY:   2.5,    // ← mayor = rotación más rápida
+
+  // Rango de escala permitido para objetos
+  SCALE_MIN:              0.2,
+  SCALE_MAX:              5.0,
+
+  // Distancia normalizada de selección (radio alrededor del punto de pellizco)
+  SELECT_RADIUS:          0.18,   // ← mayor = más fácil seleccionar
+
+  // Factor de suavizado de posición (lerp) para movimiento fluido
+  SMOOTH_FACTOR:          0.18,   // ← 0.0=sin suavizado, 1.0=instantáneo
+
+  // Distancia base de referencia para escalar con dos manos
+  TWO_HAND_BASE_DIST:     0.35,   // ← distancia relativa "neutral" entre índices
+};
+
+/* ─── COLORES DE LOS CUBOS (se asignan cíclicamente) ─── */
+const CUBE_COLORS = [0xff4fd8, 0x38e8ff, 0xa2ff5a, 0xffaa00, 0xff3a6e, 0x7c5cff];
+let colorIdx = 0;
+
+/* ════════════════════════════════════════════════════════════
+   THREE.JS — ESCENA 3D
+   ════════════════════════════════════════════════════════════ */
+const canvas3D  = document.getElementById('threeCanvas');
+const renderer  = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x08090d, 1);
+
+const scene    = new THREE.Scene();
+const camera   = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 0, 6);
+
+/* Iluminación */
+const ambLight  = new THREE.AmbientLight(0xffffff, 0.35);
+const dirLight  = new THREE.DirectionalLight(0x38e8ff, 1.4);
+dirLight.position.set(5, 8, 5);
+const backLight = new THREE.DirectionalLight(0xff4fd8, 0.6);
+backLight.position.set(-5, -3, -5);
+scene.add(ambLight, dirLight, backLight);
+
+/* Grid de fondo */
+const gridHelper = new THREE.GridHelper(20, 30, 0x1a2a3a, 0x0f1822);
+gridHelper.position.y = -2.5;
+scene.add(gridHelper);
+
+/* Resize */
+function onResize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  handCanvas.width  = w;
+  handCanvas.height = h;
+}
+window.addEventListener('resize', onResize);
+
+/* ════════════════════════════════════════════════════════════
+   GESTIÓN DE OBJETOS 3D
+   ════════════════════════════════════════════════════════════ */
+let objects       = [];   // Lista de meshes en escena
+let selectedObj   = null; // Objeto actualmente seleccionado
+
+/** Crea un cubo en coordenadas de escena (x, y) */
+function createCube(sx, sy) {
+  const color    = CUBE_COLORS[colorIdx % CUBE_COLORS.length]; colorIdx++;
+  const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+  const material = new THREE.MeshPhongMaterial({
+    color,
+    emissive:  color,
+    emissiveIntensity: 0.15,
+    specular:  0xffffff,
+    shininess: 80,
+    wireframe: false,
+  });
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25 })
+  );
+  const cube = new THREE.Mesh(geometry, material);
+  cube.add(edges);
+  cube.position.set(sx, sy, 0);
+  cube.userData.baseScale = 1;
+  scene.add(cube);
+  objects.push(cube);
+  updateObjCount();
+  /* Animación de aparición */
+  cube.scale.setScalar(0.01);
+  animateSpawn(cube);
+  return cube;
+}
+
+function animateSpawn(mesh) {
+  const target = 1;
+  (function tick() {
+    const s = mesh.scale.x;
+    if (s < target - 0.01) {
+      const ns = s + (target - s) * 0.18;
+      mesh.scale.setScalar(ns);
+      requestAnimationFrame(tick);
+    } else {
+      mesh.scale.setScalar(target);
+    }
+  })();
+}
+
+function updateObjCount() {
+  document.getElementById('obj-num').textContent = objects.length;
+}
+
+/* Resalta el objeto seleccionado */
+function highlightObject(obj) {
+  objects.forEach(o => {
+    o.material.emissiveIntensity = 0.12;
+    o.material.wireframe = false;
+  });
+  if (obj) {
+    obj.material.emissiveIntensity = 0.55;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   CONVERSIÓN DE COORDENADAS MEDIAPIPE → ESCENA THREE.JS
+   ════════════════════════════════════════════════════════════
+   MediaPipe devuelve x,y en [0,1] con (0,0)=arriba-izquierda
+   y ESPEJADO horizontalmente.
+   Three.js tiene (0,0)=centro, y positivo hacia arriba.
+   ════════════════════════════════════════════════════════════ */
+function mpToScene(nx, ny) {
+  /* ── Invertir X (el video viene espejado) ── */
+  const fx = 1.0 - nx;
+  /* ── Mapear al espacio de vista de la cámara ── */
+  const aspect = window.innerWidth / window.innerHeight;
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const halfH  = Math.tan(fovRad / 2) * camera.position.z;
+  const halfW  = halfH * aspect;
+  const sx =  (fx - 0.5) * 2 * halfW;
+  const sy = -(ny - 0.5) * 2 * halfH;
+  return { sx, sy };
+}
+
+/* ════════════════════════════════════════════════════════════
+   CANVAS OVERLAY — ESQUELETO DE MANOS
+   ════════════════════════════════════════════════════════════ */
+const handCanvas = document.getElementById('handCanvas');
+const hCtx       = handCanvas.getContext('2d');
+
+/** Dibuja los landmarks y conexiones de la mano sobre el canvas 2D */
+function drawHandOverlay(results) {
+  hCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+  if (!results.multiHandLandmarks) return;
+
+  const W = handCanvas.width;
+  const H = handCanvas.height;
+
+  results.multiHandLandmarks.forEach((landmarks, hi) => {
+    const color = hi === 0 ? '#38e8ff' : '#ff4fd8';
+
+    /* Conexiones */
+    const connections = [
+      [0,1],[1,2],[2,3],[3,4],         // Pulgar
+      [0,5],[5,6],[6,7],[7,8],         // Índice
+      [0,9],[9,10],[10,11],[11,12],    // Medio
+      [0,13],[13,14],[14,15],[15,16],  // Anular
+      [0,17],[17,18],[18,19],[19,20],  // Meñique
+      [5,9],[9,13],[13,17],            // Palma
+    ];
+    hCtx.strokeStyle = color;
+    hCtx.lineWidth   = 1.8;
+    hCtx.globalAlpha = 0.55;
+    connections.forEach(([a, b]) => {
+      hCtx.beginPath();
+      hCtx.moveTo((1 - landmarks[a].x) * W, landmarks[a].y * H);
+      hCtx.lineTo((1 - landmarks[b].x) * W, landmarks[b].y * H);
+      hCtx.stroke();
+    });
+
+    /* Nodos */
+    hCtx.globalAlpha = 1;
+    landmarks.forEach((lm, i) => {
+      const px = (1 - lm.x) * W;
+      const py = lm.y * H;
+      const r  = [0, 4, 8, 12, 16, 20].includes(i) ? 5 : 3;
+      hCtx.beginPath();
+      hCtx.arc(px, py, r, 0, Math.PI * 2);
+      hCtx.fillStyle   = i === 4 || i === 8 ? '#ffffff' : color;
+      hCtx.shadowColor = color;
+      hCtx.shadowBlur  = 8;
+      hCtx.fill();
+      hCtx.shadowBlur  = 0;
+    });
+    hCtx.globalAlpha = 1;
+  });
+}
+
+/* ════════════════════════════════════════════════════════════
+   LÓGICA DE MATEMÁTICAS Y GESTOS
+   ════════════════════════════════════════════════════════════ */
+
+/** Distancia euclidiana entre dos landmarks MediaPipe (coordenadas normalizadas) */
+function landmarkDist(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * GESTO: PELLIZCO
+ * Detecta si el pulgar (nodo 4) y el índice (nodo 8) están cerca.
+ * Retorna: true si la distancia < CFG.PINCH_THRESHOLD
+ */
+function isPinching(lm) {
+  return landmarkDist(lm[4], lm[8]) < CFG.PINCH_THRESHOLD;
+}
+
+/**
+ * GESTO: MANO ABIERTA
+ * Detecta si los 4 dedos (índice→meñique) están extendidos.
+ * Compara la punta del dedo vs. su nodo base: si la punta está más
+ * arriba (y menor) que la base, el dedo está extendido.
+ */
+function isOpenHand(lm) {
+  const tips   = [8, 12, 16, 20]; // puntas
+  const bases  = [6, 10, 14, 18]; // nudillos medios
+  let extended = 0;
+  for (let i = 0; i < 4; i++) {
+    if (lm[tips[i]].y < lm[bases[i]].y) extended++;
+  }
+  return extended >= 3; // al menos 3 dedos extendidos
+}
+
+/**
+ * ÁNGULO DE MUÑECA
+ * Calcula el ángulo (en radianes) de la línea muñeca(0) → base-dedo-medio(9).
+ * Este ángulo representa la "inclinación" de la mano para rotar objetos.
+ */
+function wristAngle(lm) {
+  const dx = lm[9].x - lm[0].x;
+  const dy = lm[9].y - lm[0].y;
+  return Math.atan2(dy, dx);
+}
+
+/**
+ * PUNTO DE PELLIZCO
+ * Retorna el punto medio normalizado entre pulgar e índice.
+ */
+function pinchPoint(lm) {
+  return {
+    x: (lm[4].x + lm[8].x) / 2,
+    y: (lm[4].y + lm[8].y) / 2,
+  };
+}
+
+/**
+ * DETECCIÓN DE OBJETO EN PUNTO
+ * Convierte el punto de pellizco a coordenadas de escena
+ * y busca el objeto más cercano dentro del radio de selección.
+ */
+function findObjectAtPoint(nx, ny) {
+  const { sx, sy } = mpToScene(nx, ny);
+  let nearest = null, nearestDist = Infinity;
+  objects.forEach(obj => {
+    const dx = obj.position.x - sx;
+    const dy = obj.position.y - sy;
+    const d  = Math.sqrt(dx * dx + dy * dy);
+    if (d < nearestDist) { nearestDist = d; nearest = obj; }
+  });
+  /* Umbral de selección en unidades de escena */
+  const aspect = window.innerWidth / window.innerHeight;
+  const fovRad = (camera.fov * Math.PI) / 180;
+  const halfH  = Math.tan(fovRad / 2) * camera.position.z;
+  const halfW  = halfH * aspect;
+  const threshScene = CFG.SELECT_RADIUS * Math.max(halfW * 2, halfH * 2);
+  return nearestDist < threshScene ? nearest : null;
+}
+
+/* ════════════════════════════════════════════════════════════
+   MÁQUINA DE ESTADOS DEL GESTO
+   ════════════════════════════════════════════════════════════ */
+const STATE = {
+  IDLE:      'IDLE',
+  PINCHING:  'PINCHING',
+  DRAGGING:  'DRAGGING',
+  ROTATING:  'ROTATING',
+  SCALING:   'SCALING',
+};
+
+let currentState     = STATE.IDLE;
+let pinchFrameCount  = 0;       // Frames consecutivos de pellizco
+let lastPinchPoint   = null;    // Último punto de pellizco (para delta)
+let lastWristAngle   = null;    // Último ángulo de muñeca (para delta)
+let twoHandBaseScale = null;    // Escala base capturada al entrar en modo escala
+let twoHandBaseDist  = null;    // Distancia base al entrar en modo escala
+
+const statusEl  = document.getElementById('status-text');
+const gestureEl = document.getElementById('gesture-text');
+
+function setStatus(s, g = '') {
+  statusEl.textContent  = s;
+  gestureEl.textContent = g;
+}
+
+/* ════════════════════════════════════════════════════════════
+   PROCESAMIENTO PRINCIPAL — CALLBACK MEDIAPIPE
+   ════════════════════════════════════════════════════════════ */
+function onHandResults(results) {
+  /* 1. Dibujar overlay de manos */
+  drawHandOverlay(results);
+
+  const hands = results.multiHandLandmarks;
+
+  /* Sin manos detectadas → reset */
+  if (!hands || hands.length === 0) {
+    currentState    = STATE.IDLE;
+    pinchFrameCount = 0;
+    lastPinchPoint  = null;
+    lastWristAngle  = null;
+    highlightObject(null);
+    setStatus('Sin manos detectadas', '');
+    return;
+  }
+
+  /* ──────────────────────────────────────────────
+     MODO DOS MANOS → ESCALAR
+     ────────────────────────────────────────────── */
+  if (hands.length >= 2 && selectedObj) {
+    const lm0 = hands[0]; // primera mano
+    const lm1 = hands[1]; // segunda mano
+
+    /* Distancia entre los índices de ambas manos (nodo 8 de cada una) */
+    const dist = landmarkDist(lm0[8], lm1[8]);
+
+    if (twoHandBaseDist === null) {
+      /* Guardar distancia y escala base al entrar en modo escala */
+      twoHandBaseDist  = dist;
+      twoHandBaseScale = selectedObj.scale.x;
+    }
+
+    /* ── Matemática de escala:
+       ratio = distancia_actual / distancia_base
+       nueva_escala = escala_base * ratio
+       Se aplica clamp entre SCALE_MIN y SCALE_MAX ── */
+    const ratio     = dist / twoHandBaseDist;
+    const newScale  = THREE.MathUtils.clamp(
+      twoHandBaseScale * ratio,
+      CFG.SCALE_MIN,
+      CFG.SCALE_MAX
+    );
+    /* Lerp para suavizar la escala */
+    const s = selectedObj.scale.x + (newScale - selectedObj.scale.x) * CFG.SMOOTH_FACTOR * 3;
+    selectedObj.scale.setScalar(s);
+
+    currentState = STATE.SCALING;
+    setStatus('Escalando objeto', `↔ dist: ${dist.toFixed(3)}`);
+    return;
+  }
+
+  /* Si se venía escalando y ahora hay una sola mano, resetear base */
+  if (hands.length < 2) {
+    twoHandBaseDist  = null;
+    twoHandBaseScale = null;
+  }
+
+  /* ──────────────────────────────────────────────
+     MODO UNA MANO
+     ────────────────────────────────────────────── */
+  const lm         = hands[0];
+  const pinching   = isPinching(lm);
+  const openHand   = isOpenHand(lm);
+  const pp         = pinchPoint(lm);
+  const wAngle     = wristAngle(lm);
+
+  if (pinching) {
+    pinchFrameCount++;
+    currentState = STATE.PINCHING;
+
+    if (pinchFrameCount >= CFG.PINCH_DRAG_FRAMES) {
+      /* ── ARRASTRAR: buscar objeto bajo el pellizco ── */
+      const hit = findObjectAtPoint(pp.x, pp.y);
+
+      if (hit && pinchFrameCount >= CFG.PINCH_DRAG_FRAMES) {
+        /* Modo DRAG */
+        selectedObj  = hit;
+        currentState = STATE.DRAGGING;
+        highlightObject(selectedObj);
+
+        if (lastPinchPoint) {
+          /* ── Matemática de traslación:
+             delta normalizado → delta en espacio de escena ── */
+          const { sx: cx, sy: cy } = mpToScene(pp.x, pp.y);
+          const { sx: px, sy: py } = mpToScene(lastPinchPoint.x, lastPinchPoint.y);
+          const dx = (cx - px) * CFG.SMOOTH_FACTOR * (1 / CFG.SMOOTH_FACTOR) ;
+          const dy = (cy - py) * CFG.SMOOTH_FACTOR * (1 / CFG.SMOOTH_FACTOR);
+          selectedObj.position.x += (cx - px);
+          selectedObj.position.y += (cy - py);
+        }
+        setStatus('Arrastrando', `🤏 Pellizco activo`);
+      } else if (!hit && pinchFrameCount === CFG.PINCH_CREATE_FRAMES) {
+        /* ── CREAR CUBO si no hay objeto debajo ── */
+        const { sx, sy } = mpToScene(pp.x, pp.y);
+        const newCube = createCube(sx, sy);
+        selectedObj   = newCube;
+        highlightObject(selectedObj);
+        setStatus('¡Cubo creado!', `🆕 (${sx.toFixed(1)}, ${sy.toFixed(1)})`);
+      } else if (!hit) {
+        setStatus('Pellizco…', `frames: ${pinchFrameCount}`);
+      }
+    }
+
+    lastPinchPoint = { ...pp };
+    lastWristAngle = null; // reset ángulo al pellizcar
+
+  } else {
+    /* Sin pellizco */
+    pinchFrameCount = 0;
+    lastPinchPoint  = null;
+
+    if (openHand && selectedObj) {
+      /* ── ROTAR con mano abierta ── */
+      currentState = STATE.ROTATING;
+
+      if (lastWristAngle !== null) {
+        /* ── Matemática de rotación:
+           delta_ángulo = ángulo_actual - ángulo_anterior
+           Se aplica directamente como rotación en Z.
+           CFG.ROTATION_SENSITIVITY amplifica el cambio. ── */
+        let deltaAngle = wAngle - lastWristAngle;
+        /* Normalizar el delta para evitar saltos en ±π */
+        if (deltaAngle >  Math.PI) deltaAngle -= 2 * Math.PI;
+        if (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI;
+        selectedObj.rotation.z += deltaAngle * CFG.ROTATION_SENSITIVITY;
+        /* También rotar levemente en Y para efecto 3D */
+        selectedObj.rotation.y += deltaAngle * CFG.ROTATION_SENSITIVITY * 0.4;
+      }
+      lastWristAngle = wAngle;
+      setStatus('Rotando objeto', `↻ ángulo: ${(wAngle * 57.3).toFixed(1)}°`);
+
+    } else {
+      currentState   = STATE.IDLE;
+      lastWristAngle = null;
+      setStatus(selectedObj ? 'Objeto seleccionado' : 'Mano detectada',
+                openHand ? '🖐 Mano abierta' : '✋ Mano cerrada');
+    }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   ANIMACIÓN CONTINUA DE THREE.JS
+   ════════════════════════════════════════════════════════════ */
+function animate() {
+  requestAnimationFrame(animate);
+  /* Rotación suave idle de objetos no seleccionados */
+  objects.forEach(obj => {
+    if (obj !== selectedObj) {
+      obj.rotation.y += 0.004;
+      obj.rotation.x += 0.002;
+    }
+  });
+  renderer.render(scene, camera);
+}
+animate();
+
+/* ════════════════════════════════════════════════════════════
+   MEDIAPIPE — INICIALIZACIÓN
+   ════════════════════════════════════════════════════════════ */
+let mpCamera = null;
+
+async function startCamera() {
+  document.getElementById('start-screen').style.display = 'none';
+  onResize();
+
+  const videoEl = document.getElementById('videoEl');
+
+  /* Configurar MediaPipe Hands */
+  const hands = new Hands({
+    locateFile: (file) =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`,
+  });
+
+  hands.setOptions({
+    maxNumHands:           2,       // Detectar hasta 2 manos
+    modelComplexity:       1,       // 0=lite, 1=full
+    minDetectionConfidence: 0.75,
+    minTrackingConfidence:  0.65,
+  });
+
+  hands.onResults(onHandResults);
+
+  /* Iniciar stream de cámara */
+  mpCamera = new Camera(videoEl, {
+    onFrame: async () => {
+      await hands.send({ image: videoEl });
+    },
+    width:  640,
+    height: 480,
+    facingMode: 'user',
+  });
+
+  try {
+    await mpCamera.start();
+    setStatus('Cámara activa', '🟢 Detectando manos…');
+  } catch (e) {
+    setStatus('Error de cámara', '⚠ Permiso denegado');
+    document.getElementById('start-screen').style.display = 'flex';
+  }
+}
+
+/* Botón de inicio */
+document.getElementById('start-btn').addEventListener('click', startCamera);
+
+/* Tamaño inicial */
+onResize();
+</script>
 </body>
 </html>
